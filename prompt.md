@@ -34,3 +34,32 @@
 - 競合記事を丸写ししない
 
 `rewrite-plan.md` 作成後は、本文リライト前に必ず確認待ちで止めてください。
+
+## 使用するルールファイル
+
+Codexは作業開始前に、必ず以下のルールファイルをすべて読んでください。
+
+- rules/rewrite-rule.md
+- rules/swell-rule.md
+- rules/affiliate-rule.md
+- rules/decoration-rule.md
+
+## 作業順序
+
+作業は必ず以下の順番で進めてください。
+
+1. input.md と original.html を確認する
+2. rules/ 配下のルールをすべて確認する
+3. まず rewrite-plan.md を作成する
+4. 本文リライト前に一度停止する
+5. 承認後、rewritten.html を作成する
+6. 本文リライト完了後に decoration-rule.md に従って装飾を適用する
+7. 変更内容を change-log.md に記録する
+
+## 重要
+
+- 本文リライト前に装飾は適用しない
+- decoration-rule.md は最後の装飾工程で使用する
+- H2/H3を勝手に削除しない
+- 元記事より情報量を減らさない
+- WordPressに貼り付け可能なHTMLを維持する
