@@ -321,3 +321,49 @@ main().catch((error) => {
   console.error(error.message);
   process.exit(1);
 });
+async function loadEnv(filePath = ".env") {
+  try {
+    const text = await readFile(filePath, "utf8");
+
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const eqIndex = trimmed.indexOf("=");
+      if (eqIndex === -1) continue;
+
+      const key = trimmed.slice(0, eqIndex).trim();
+      let value = trimmed.slice(eqIndex + 1).trim();
+
+      value = value.replace(/^["']|["']$/g, "");
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+function getWpAuthHeaders() {
+  const username = process.env.WP_USERNAME || "";
+  const appPassword = (process.env.WP_APPLICATION_PASSWORD || "").replace(/\s+/g, "");
+
+  if (!username || !appPassword) return {};
+
+  const token = Buffer.from(`${username}:${appPassword}`, "utf8").toString("base64");
+
+  return {
+    authorization: `Basic ${token}`,
+  };
+}
+
+function hasWpAuth() {
+  return Boolean(
+    process.env.WP_USERNAME &&
+      process.env.WP_APPLICATION_PASSWORD &&
+      process.env.WP_APPLICATION_PASSWORD.trim()
+  );
+}
