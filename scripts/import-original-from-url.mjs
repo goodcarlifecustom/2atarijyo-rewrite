@@ -32,11 +32,12 @@ try {
 const userAgent =
   "Mozilla/5.0 (compatible; ArticleImporter/1.0; +https://www.atarijo.com/)";
 
-async function fetchText(url, accept = "text/html") {
+async function fetchText(url, accept = "text/html", extraHeaders = {}) {
   const res = await fetch(url, {
     headers: {
       "user-agent": userAgent,
       accept,
+      ...extraHeaders,
     },
   });
 
@@ -47,9 +48,14 @@ async function fetchText(url, accept = "text/html") {
   return await res.text();
 }
 
-async function fetchJson(url) {
-  const text = await fetchText(url, "application/json");
-  return JSON.parse(text);
+async function fetchJson(url, extraHeaders = {}) {
+  const text = await fetchText(url, "application/json", extraHeaders);
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`JSONの解析に失敗しました: ${url}`);
+  }
 }
 
 function unique(values) {
