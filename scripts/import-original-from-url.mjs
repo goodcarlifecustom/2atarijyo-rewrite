@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * URLから元記事HTMLを取得して articles/sample-article/original.html に保存するだけの補助スクリプト。
+ * URLから元記事HTMLを取得して articles/sample-article/original.html に保存する補助スクリプト。
+ *
+ * WordPressのアプリケーションパスワードが .env に設定されている場合は、
+ * WordPress REST APIへ認証付きでアクセスして本文HTMLを取得する。
  *
  * 既存の prompt.md / rules / rewrite-plan.md / rewritten.html は一切変更しない。
  *
@@ -12,12 +15,117 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+async function loadEnv(filePath = ".env") {
+  try {
+    const text = await readFile(filePath, "utf8");
+
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const eqIndex = trimmed.indexOf("=");
+      if (eqIndex === -1) continue;
+
+      const key = trimmed.slice(0, eqIndex).trim();
+      let value = trimmed.slice(eqIndex + 1).trim();
+
+      value = value.replace(/^["']|["']$/g, "");
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+function getWpAuthHeaders() {
+  const username = process.env.WP_USERNAME || "";
+  const appPassword = (process.env.WP_APPLICATION_PASSWORD || "").replace(/\s+/g, "");
+
+  if (!username || !appPassword) return {};
+
+  const token = Buffer.from(`${username}:${appPassword}`, "utf8").toString("base64");
+
+  return {
+    authorization: `Basic ${token}`,
+  };
+}
+
+function hasWpAuth() {
+  return Boolean(
+    process.env.WP_USERNAME &&
+      process.env.WP_APPLICATION_PASSWORD &&
+      process.env.WP_APPLICATION_PASSWORD.trim()
+  );
+}
+
+function getPostTypes() {
+  return (process.env.WP_POST_TYPES || "posts,pages")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function getMinHtmlLength() {
+  const value = Number(process.env.MIN_HTML_LENGTH || 500);
+  return Number.isFinite(value) && value > 0 ? value : 500;
+}
+
+function pickContent(item) {
+  const mode = (process.env.WP_CONTENT_MODE || "rendered").toLowerCase();
+
+  const raw = item?.content?.raw;
+  const rendered = item?.content?.rendered;
+
+  const candidates = mode === "raw" ? [raw, rendered] : [rendered, raw];
+
+  const content = candidates.find(
+    (value) => typeof value === "string" && value.trim().length > 0
+  );
+
+  return content ? content.trim() : "";
+}
+
+function pickTitle(item) {
+  return item?.title?.raw || item?.title?.rendered || "";
+}
+
+function getRequestVariants(useAuth) {
+  if (!useAuth) {
+    return [
+      {
+        context: "view",
+      },
+    ];
+  }
+
+  return [
+    {
+      context: "edit",
+      status: "any",
+    },
+    {
+      context: "edit",
+    },
+    {
+      context: "view",
+    },
+  ];
+}
+
+await loadEnv();
+
 const sourceUrl = process.argv[2];
 const outputPath = process.argv[3] || "articles/sample-article/original.html";
 
 if (!sourceUrl) {
   console.error("URLを指定してください。");
-  console.error('例: node scripts/import-original-from-url.mjs "https://www.atarijo.com/media/sapporo-sexfriend/"');
+  console.error(
+    '例: node scripts/import-original-from-url.mjs "https://www.atarijo.com/media/sapporo-sexfriend/"'
+  );
   process.exit(1);
 }
 
@@ -75,25 +183,55 @@ function decodeHtmlEntities(str) {
 function getSlugFromUrl(urlObj) {
   const parts = urlObj.pathname.split("/").filter(Boolean);
   const last = parts[parts.length - 1] || "";
-  return last.replace(/\.html?$/i, "");
+  const slug = last.replace(/\.html?$/i, "");
+
+  try {
+    return decodeURIComponent(slug);
+  } catch {
+    return slug;
+  }
+}
+
+function normalizeRestRoot(url) {
+  if (!url) return "";
+
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+
+  if (/\/wp-json\/?$/i.test(trimmed)) {
+    return trimmed.replace(/\/?$/, "/");
+  }
+
+  return trimmed.replace(/\/?$/, "/") + "wp-json/";
+}
+
+function getConfiguredRestRoots() {
+  return (process.env.WP_REST_ROOT || "")
+    .split(",")
+    .map(normalizeRestRoot)
+    .filter(Boolean);
 }
 
 function getRestCandidates(pageHtml, urlObj) {
   const candidates = [];
 
-  const relApiRegex =
-    /<link[^>]+rel=["']https:\/\/api\.w\.org\/["'][^>]+href=["']([^"']+)["'][^>]*>/gi;
+  candidates.push(...getConfiguredRestRoots());
 
-  let match;
-  while ((match = relApiRegex.exec(pageHtml)) !== null) {
-    candidates.push(decodeHtmlEntities(match[1]));
-  }
+  if (pageHtml) {
+    const relApiRegex =
+      /<link[^>]+rel=["']https:\/\/api\.w\.org\/["'][^>]+href=["']([^"']+)["'][^>]*>/gi;
 
-  const relApiRegexReverse =
-    /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']https:\/\/api\.w\.org\/["'][^>]*>/gi;
+    let match;
+    while ((match = relApiRegex.exec(pageHtml)) !== null) {
+      candidates.push(decodeHtmlEntities(match[1]));
+    }
 
-  while ((match = relApiRegexReverse.exec(pageHtml)) !== null) {
-    candidates.push(decodeHtmlEntities(match[1]));
+    const relApiRegexReverse =
+      /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']https:\/\/api\.w\.org\/["'][^>]*>/gi;
+
+    while ((match = relApiRegexReverse.exec(pageHtml)) !== null) {
+      candidates.push(decodeHtmlEntities(match[1]));
+    }
   }
 
   const pathParts = urlObj.pathname.split("/").filter(Boolean);
@@ -104,7 +242,7 @@ function getRestCandidates(pageHtml, urlObj) {
     candidates.push(`${urlObj.origin}/${pathParts[0]}/wp-json/`);
   }
 
-  return unique(candidates.map((url) => url.replace(/\/?$/, "/")));
+  return unique(candidates.map(normalizeRestRoot));
 }
 
 async function tryFetchWordPressContent(pageHtml, urlObj) {
@@ -112,35 +250,45 @@ async function tryFetchWordPressContent(pageHtml, urlObj) {
   if (!slug) return null;
 
   const restCandidates = getRestCandidates(pageHtml, urlObj);
+  const postTypes = getPostTypes();
+  const authHeaders = getWpAuthHeaders();
+  const useAuth = hasWpAuth();
+  const minHtmlLength = getMinHtmlLength();
 
   for (const restRoot of restCandidates) {
-    for (const postType of ["posts", "pages"]) {
-      const apiUrl =
-        `${restRoot}wp/v2/${postType}?slug=${encodeURIComponent(slug)}` +
-        "&_fields=id,slug,link,title,content";
+    for (const postType of postTypes) {
+      for (const variant of getRequestVariants(useAuth)) {
+        const params = new URLSearchParams({
+          slug,
+          _fields: "id,slug,link,title,content,status,type",
+        });
 
-      try {
-        const items = await fetchJson(apiUrl);
-
-        if (
-          Array.isArray(items) &&
-          items[0] &&
-          items[0].content &&
-          typeof items[0].content.rendered === "string" &&
-          items[0].content.rendered.trim().length > 500
-        ) {
-          return {
-            html: items[0].content.rendered.trim(),
-            sourceType: `wordpress-rest:${postType}`,
-            apiUrl,
-            title:
-              items[0].title && typeof items[0].title.rendered === "string"
-                ? items[0].title.rendered
-                : "",
-          };
+        for (const [key, value] of Object.entries(variant)) {
+          params.set(key, value);
         }
-      } catch {
-        // REST APIが無効・権限不足・URL違いの場合は次の候補へ進む
+
+        const apiUrl = `${restRoot}wp/v2/${postType}?${params.toString()}`;
+
+        try {
+          const items = await fetchJson(apiUrl, useAuth ? authHeaders : {});
+
+          if (!Array.isArray(items) || !items[0]) continue;
+
+          const html = pickContent(items[0]);
+
+          if (html && html.length > minHtmlLength) {
+            return {
+              html,
+              sourceType: useAuth
+                ? `wordpress-rest-auth:${postType}`
+                : `wordpress-rest-public:${postType}`,
+              apiUrl,
+              title: pickTitle(items[0]),
+            };
+          }
+        } catch {
+          // REST APIが無効・権限不足・URL違いの場合は次の候補へ進む
+        }
       }
     }
   }
@@ -207,6 +355,7 @@ function extractElementByTag(html, tagName) {
 
 function extractMainContent(pageHtml) {
   const cleaned = removeNoise(pageHtml);
+  const minHtmlLength = getMinHtmlLength();
 
   const candidates = [
     extractElementByClass(cleaned, "post_content"),
@@ -217,7 +366,7 @@ function extractMainContent(pageHtml) {
     extractElementByClass(cleaned, "main_content"),
     extractElementByTag(cleaned, "article"),
     extractElementByTag(cleaned, "main"),
-  ].filter((html) => html && html.trim().length > 500);
+  ].filter((html) => html && html.trim().length > minHtmlLength);
 
   if (candidates.length > 0) {
     candidates.sort((a, b) => b.length - a.length);
@@ -280,12 +429,35 @@ async function backupIfNeeded(filePath) {
 async function main() {
   console.log(`取得URL: ${sourceUrl}`);
 
-  const pageHtml = await fetchText(sourceUrl);
+  if (hasWpAuth()) {
+    console.log("WordPress認証: 有効");
+  } else {
+    console.log("WordPress認証: なし。公開REST APIまたは公開HTMLで取得します。");
+  }
+
+  let pageHtml = "";
+  let pageFetchError = null;
+
+  try {
+    pageHtml = await fetchText(sourceUrl);
+  } catch (error) {
+    pageFetchError = error;
+    console.warn("公開HTMLの取得に失敗しました。WordPress REST APIでの取得を試します。");
+  }
 
   const wpContent = await tryFetchWordPressContent(pageHtml, parsedUrl);
-  const result = wpContent || extractMainContent(pageHtml);
 
-  if (!result.html || result.html.trim().length < 500) {
+  let result;
+
+  if (wpContent) {
+    result = wpContent;
+  } else if (pageHtml) {
+    result = extractMainContent(pageHtml);
+  } else {
+    throw pageFetchError || new Error("公開HTMLもWordPress REST APIも取得できませんでした。");
+  }
+
+  if (!result.html || result.html.trim().length < getMinHtmlLength()) {
     throw new Error("取得したHTMLが短すぎます。URLまたは抽出結果を確認してください。");
   }
 
@@ -327,49 +499,3 @@ main().catch((error) => {
   console.error(error.message);
   process.exit(1);
 });
-async function loadEnv(filePath = ".env") {
-  try {
-    const text = await readFile(filePath, "utf8");
-
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-
-      if (!trimmed || trimmed.startsWith("#")) continue;
-
-      const eqIndex = trimmed.indexOf("=");
-      if (eqIndex === -1) continue;
-
-      const key = trimmed.slice(0, eqIndex).trim();
-      let value = trimmed.slice(eqIndex + 1).trim();
-
-      value = value.replace(/^["']|["']$/g, "");
-
-      if (key && process.env[key] === undefined) {
-        process.env[key] = value;
-      }
-    }
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-}
-
-function getWpAuthHeaders() {
-  const username = process.env.WP_USERNAME || "";
-  const appPassword = (process.env.WP_APPLICATION_PASSWORD || "").replace(/\s+/g, "");
-
-  if (!username || !appPassword) return {};
-
-  const token = Buffer.from(`${username}:${appPassword}`, "utf8").toString("base64");
-
-  return {
-    authorization: `Basic ${token}`,
-  };
-}
-
-function hasWpAuth() {
-  return Boolean(
-    process.env.WP_USERNAME &&
-      process.env.WP_APPLICATION_PASSWORD &&
-      process.env.WP_APPLICATION_PASSWORD.trim()
-  );
-}
