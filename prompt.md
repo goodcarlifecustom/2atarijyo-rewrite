@@ -1,65 +1,84 @@
-# Codexへの最初の指示
+# Codex Cloud用：記事URL一発リライト・WordPress下書き作成指示書
 
-このリポジトリはSEO記事リライト用です。
+このリポジトリは、Codex CloudでWordPress記事をSEOリライトし、新規下書きとして投稿するためのワークフローです。
 
-まず `rules/` 配下のルールをすべて読んでください。
-次に対象記事フォルダ内の `original.html` と `input.md` を確認してください。
+ユーザーが記事URLを1つ渡したら、確認待ちで停止せず、URL取得からWordPress下書き作成、作業ログ記録まで最後まで実行してください。
 
-## 重要
+## 最重要方針
 
-まだ本文はリライトしないでください。
+- Codex Cloud前提で実行する。
+- Codex CLI前提の説明やローカル実行前提の手順を書かない。
+- `rewrite-plan.md` 作成後に確認待ちで止まらない。
+- 既存の重要なH2/H3を勝手に削除しない。
+- 元記事より情報量を減らさない。
+- 元記事より本文文字数を少なくしない。
+- 検索意図を変えない。
+- WordPressに貼り付け可能なHTMLで作成する。
+- SWELLテーマで崩れにくいHTMLにする。
+- WordPressの既存公開記事は直接更新しない。
+- WordPressには必ず新規下書きとして投稿する。
+- `.env` や認証情報は作成・編集・コミットしない。
+- WordPressユーザー名、アプリケーションパスワード、認証情報をログや作業メモに出力しない。
 
-最初に `rewrite-plan.md` を作成してください。
+## 使用する制御ファイル
 
-`rewrite-plan.md` には以下を必ず含めてください。
+作業開始前に、必ず以下を読んでください。
 
-1. 元記事の検索意図
-2. 現在のH2/H3構成
-3. 絶対に残すべきH2/H3
-4. 削除してはいけない見出し
-5. 追加した方がよいH2/H3
-6. 情報が不足している箇所
-7. 内部リンク候補
-8. 公的・信頼性のある外部リンク候補
-9. アフィリエイト導線の改善案
-10. SWELL装飾の改善案
-11. リライト時の注意点
+- `rules/` 配下のすべてのルールファイル
+- `articles/sample-article/input.md`
 
-## 禁止事項
+リライト内容は主に以下で制御します。
 
-- この段階で本文を書き換えない
-- 重要なH2/H3を勝手に削除しない
-- 元記事より情報量を減らさない
-- 検索意図を変えない
-- 競合記事を丸写ししない
+- リライト方針: `rules/rewrite-rule.md` と `articles/sample-article/input.md`
+- 外部リンク方針: `rules/external-link-rule.md`
+- SWELL装飾方針: `rules/decoration-rule.md`
 
-`rewrite-plan.md` 作成後は、本文リライト前に必ず確認待ちで止めてください。
+## URL一発ワークフロー
 
-## 使用するルールファイル
+ユーザー指示に記事URLが含まれる場合、以下を順番に最後まで実行してください。
 
-Codexは作業開始前に、必ず以下のルールファイルをすべて読んでください。
+1. `rules/` 配下をすべて読む。
+2. `articles/sample-article/input.md` を読む。
+3. ユーザー指示内の記事URLを取得する。
+4. `node scripts/import-original-from-url.mjs "<記事URL>"` を実行し、`articles/sample-article/original.html` を作成する。
+5. `articles/sample-article/original.html` を分析し、検索意図、既存H2/H3、残すべき重要見出し、不足情報を確認する。
+6. `articles/sample-article/rewrite-plan.md` を作成する。
+7. 確認待ちで止まらず、続けて `articles/sample-article/rewritten.html` を作成する。
+8. `rules/external-link-rule.md` に従い、公的機関・公式サイト・信頼できる情報源への外部リンクを自然な箇所に追加する。
+9. `rules/decoration-rule.md` に従い、SWELL向けにHTML装飾を適用する。
+10. `node scripts/validate-rewritten.mjs` を実行してHTMLを検証する。
+11. WordPress認証情報が環境変数で設定されている場合、`node scripts/create-wordpress-draft.mjs` を実行し、WordPressへ新規下書きを作成する。認証情報がない場合は投稿実行のみスキップする。
+12. `articles/sample-article/change-log.md` に、変更内容、外部リンク追加箇所、検証結果、WordPress下書きURLまたは投稿スキップ理由を記録する。
 
-- rules/rewrite-rule.md
-- rules/swell-rule.md
-- rules/affiliate-rule.md
-- rules/decoration-rule.md
+## rewrite-plan.md に含める内容
 
-## 作業順序
+- 元記事の検索意図
+- 現在のH2/H3構成
+- 絶対に残すべきH2/H3
+- 削除してはいけない見出し
+- 追加した方がよいH2/H3
+- 情報が不足している箇所
+- 内部リンク候補
+- 公的・信頼性のある外部リンク候補
+- アフィリエイト導線の改善案
+- SWELL装飾の改善案
+- リライト時の注意点
 
-作業は必ず以下の順番で進めてください。
+## rewritten.html 作成ルール
 
-1. input.md と original.html を確認する
-2. rules/ 配下のルールをすべて確認する
-3. まず rewrite-plan.md を作成する
-4. 本文リライト前に一度停止する
-5. 承認後、rewritten.html を作成する
-6. 本文リライト完了後に decoration-rule.md に従って装飾を適用する
-7. 変更内容を change-log.md に記録する
+- 記事本文のみをHTMLで作成する。
+- 不要な説明文や作業メモを入れない。
+- コードブロックで囲まず、WordPressに貼り付け可能なHTMLをそのまま保存する。
+- H2/H3/H4階層を崩さない。
+- 既存の重要見出しは、検索意図に合う形で残す・補強する。
+- 必要に応じて比較表、箇条書き、FAQ、注意点、メリット・デメリット、利用手順を追加する。
+- 外部リンクは読者の安全性・信頼性・判断材料になる箇所へ自然に追加し、追加箇所を `change-log.md` に記録する。
+- 装飾は過剰にせず、SWELLで崩れにくいシンプルなHTMLにする。
 
-## 重要
+## WordPress下書き作成
 
-- 本文リライト前に装飾は適用しない
-- decoration-rule.md は最後の装飾工程で使用する
-- H2/H3を勝手に削除しない
-- 元記事より情報量を減らさない
-- WordPressに貼り付け可能なHTMLを維持する
+- `scripts/create-wordpress-draft.mjs` は `articles/sample-article/rewritten.html` を読み込み、WordPress REST APIへ `status: "draft"` で新規投稿する。
+- 既存記事は更新しない。
+- 認証情報は環境変数から読む。
+- 投稿結果は `articles/sample-article/wordpress-draft.json` に保存する。
+- 下書きID、編集URL、公開プレビューに使えるURLが取得できる場合は `change-log.md` に記録する。
