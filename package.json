@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "import": "node scripts/import-original-from-url.mjs",
+    "validate": "node scripts/validate-rewritten.mjs",
+    "draft": "node scripts/create-wordpress-draft.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
